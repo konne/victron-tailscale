@@ -220,3 +220,18 @@ sh /data/victron-tailscale/setup.sh
 
 **tailscale not found after firmware update:**
 Reboot the device. The init.d script will detect the missing binary, download it, and re-apply the configuration automatically.
+
+**`service hosts must be tagged nodes` error:**
+Tailscale requires the device to be a tagged node (not a user node) to host `svc:` services. Fix:
+
+1. Open your tailnet ACL policy at <https://login.tailscale.com/admin/acls> and add a tag owner:
+   ```json
+   "tagOwners": {
+     "tag:server": []
+   }
+   ```
+2. Re-authenticate the device with that tag:
+   ```sh
+   tailscale up --advertise-tags=tag:server --reset
+   ```
+3. Re-run `setup.sh`.

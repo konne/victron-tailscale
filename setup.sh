@@ -246,8 +246,18 @@ echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
     log "  ${SERVICE_NAME}: already configured – skipping."
   else
     log "  ${SERVICE_NAME}: configuring ${path} -> ${local_url}${path}"
-    tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" || {
-      log "  WARNING: failed to configure serve for ${SERVICE_NAME}"
+    SERVE_ERR="$(tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" 2>&1)" || {
+      if echo "$SERVE_ERR" | grep -q "tagged nodes"; then
+        log "  ERROR: this node must be a tagged node to host Tailscale services."
+        log "         To fix this:"
+        log "         1. Open https://login.tailscale.com/admin/acls"
+        log "            Add a tag, e.g.:  \"tagOwners\": { \"tag:server\": [] }"
+        log "         2. Re-authenticate with that tag:"
+        log "            tailscale up --advertise-tags=tag:server --reset"
+        log "         3. Re-run setup.sh"
+      else
+        log "  WARNING: failed to configure serve for ${SERVICE_NAME}: ${SERVE_ERR}"
+      fi
     }
   fi
 done
