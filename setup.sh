@@ -11,16 +11,22 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="${SCRIPT_DIR}/config.sh"
+TEMPLATE="${SCRIPT_DIR}/config-template.sh"
 
 # ---------------------------------------------------------------------------
-# Load config
+# Load config (create from template on first run)
 # ---------------------------------------------------------------------------
 if [ ! -f "$CONFIG" ]; then
+  if [ -f "$TEMPLATE" ]; then
+    echo "No config.sh found – copying from config-template.sh."
+    echo "Edit ${CONFIG} to set your DEVICE_NAME before continuing."
+    cp "$TEMPLATE" "$CONFIG"
+  fi
   echo "ERROR: config.sh not found at ${CONFIG}"
-  echo "       Copy config.sh from the repo and edit it before running setup."
+  echo "       Edit it and re-run setup.sh."
   exit 1
 fi
-# shellcheck source=config.sh
+# shellcheck source=config-template.sh
 . "$CONFIG"
 
 BOOT_MODE=false

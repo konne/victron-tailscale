@@ -40,10 +40,14 @@ The installer will:
 ### Manual install
 
 ```sh
-# Clone
-git clone https://github.com/konne/victron-tailscale.git /data/victron-tailscale
+# Download and extract
+wget -qO /tmp/vt.tgz https://github.com/konne/victron-tailscale/archive/refs/heads/main.tar.gz
+mkdir -p /data/victron-tailscale
+tar -xzf /tmp/vt.tgz -C /data/victron-tailscale --strip-components=1
+rm /tmp/vt.tgz
 
-# Edit config
+# Create your config from the template and edit it
+cp /data/victron-tailscale/config-template.sh /data/victron-tailscale/config.sh
 vi /data/victron-tailscale/config.sh
 
 # Run setup
@@ -54,7 +58,9 @@ sh /data/victron-tailscale/setup.sh
 
 ## Configuration
 
-All options are in [`config.sh`](config.sh). The key settings:
+The repo ships [`config-template.sh`](config-template.sh). On first install this is copied to `config.sh` (your local config). Updates never touch `config.sh` or the `state/` directory, so your settings and Tailscale state are always preserved.
+
+All options are in `config.sh`. The key settings:
 
 ### Device name
 
@@ -149,14 +155,15 @@ By default `setup.sh` fetches the latest stable version from `https://pkgs.tails
 /data/
 ├── rc.local                        # Victron boot hook (created/updated by setup.sh)
 └── victron-tailscale/
-    ├── config.sh                   # your configuration (edit this)
+    ├── config-template.sh          # template – updated by installer, never edit this
+    ├── config.sh                   # your config – created from template, never overwritten
     ├── setup.sh                    # install / re-apply configuration
     ├── install.sh                  # bootstrap script (fetched from GitHub)
     ├── uninstall.sh                # full removal
     ├── init.d/
     │   └── tailscaled              # init.d script (copied to /etc/init.d/ on each boot)
-    ├── state/
-    │   └── tailscaled.state        # Tailscale persistent state (survives firmware updates)
+    ├── state/                      # Tailscale persistent state – never overwritten by updates
+    │   └── tailscaled.state
     └── tmp/                        # temporary download directory (auto-cleaned)
 ```
 
@@ -164,14 +171,11 @@ By default `setup.sh` fetches the latest stable version from `https://pkgs.tails
 
 ## Updating
 
-Pull the latest version and re-run setup:
+Re-run the installer. It downloads the latest archive, updates all repo files, and leaves `config.sh` and `state/` untouched:
 
 ```sh
-git -C /data/victron-tailscale pull
-sh /data/victron-tailscale/setup.sh
+wget -qO- https://raw.githubusercontent.com/konne/victron-tailscale/main/install.sh | sh
 ```
-
-Or re-run the one-line installer – it detects an existing installation and does a `git pull`.
 
 ---
 
