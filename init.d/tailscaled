@@ -32,7 +32,7 @@ case "$1" in
       --make-pidfile \
       --chuid root:root \
       --startas "$DAEMON" \
-      -- --state="${STATE_DIR}/tailscaled.state"
+      -- --statedir="${STATE_DIR}"
 
     # Give the daemon a moment to open its socket before we talk to it.
     sleep 2
