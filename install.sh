@@ -1,20 +1,23 @@
 #!/bin/sh
-# install.sh – bootstrap victron-tailscale from GitHub onto a Victron device.
+# install.sh – install or update victron-tailscale on a Victron device.
 #
-# Fetch and run in one command (replace <your-github-user> with your username):
+# Fetch and run in one command:
 #
-#   wget -qO- https://raw.githubusercontent.com/<user>/victron-tailscale/main/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/konne/victron-tailscale/main/install.sh | sh
 #
 # What this script does:
-#   1. Clones (or updates) the repo into /data/victron-tailscale
-#   2. Prompts you to edit config.sh if DEVICE_NAME is still the placeholder
-#   3. Runs setup.sh to install tailscale and configure everything
+#   1. Downloads the repo archive and extracts it, preserving config.sh and state/
+#   2. On first install: copies config-template.sh to config.sh and prompts for editing
+#   3. Runs setup.sh
 
 set -e
 
-REPO_URL="https://github.com/konne/victron-tailscale.git"
+REPO_ARCHIVE_URL="https://github.com/konne/victron-tailscale/archive/refs/heads/main.tar.gz"
 INSTALL_DIR="/data/victron-tailscale"
 CONFIG="${INSTALL_DIR}/config.sh"
+TEMPLATE="${INSTALL_DIR}/config-template.sh"
+TMP_ARCHIVE="${INSTALL_DIR}/tmp/update.tgz"
+TMP_EXTRACT="${INSTALL_DIR}/tmp/update-extract"
 
 echo "============================================================"
 echo "  victron-tailscale installer"
@@ -22,51 +25,59 @@ echo "============================================================"
 echo ""
 
 # ---------------------------------------------------------------------------
-# 1. Clone or update the repository
+# 1. Download and extract – preserve config.sh and state/
 # ---------------------------------------------------------------------------
-if [ -d "${INSTALL_DIR}/.git" ]; then
-  echo "Existing installation found – pulling latest changes..."
-  git -C "$INSTALL_DIR" pull --ff-only
-else
-  echo "Cloning repository to ${INSTALL_DIR} ..."
-  # git may not be available on all Victron firmware versions; fall back to
-  # downloading a tarball if needed.
-  if command -v git >/dev/null 2>&1; then
-    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
-  else
-    echo "git not found – downloading archive instead..."
-    ARCHIVE_URL="https://github.com/konne/victron-tailscale/archive/refs/heads/main.tar.gz"
-    TMP_ARCHIVE="/tmp/victron-tailscale.tgz"
-    wget -qO "$TMP_ARCHIVE" "$ARCHIVE_URL"
-    mkdir -p "$INSTALL_DIR"
-    tar -xzf "$TMP_ARCHIVE" -C "$INSTALL_DIR" --strip-components=1
-    rm -f "$TMP_ARCHIVE"
-  fi
-fi
+mkdir -p "${INSTALL_DIR}/tmp"
+
+echo "Downloading latest release..."
+wget -qO "$TMP_ARCHIVE" "$REPO_ARCHIVE_URL" || {
+  echo "ERROR: download failed. Check network connectivity."
+  exit 1
+}
+
+echo "Extracting..."
+rm -rf "$TMP_EXTRACT"
+mkdir -p "$TMP_EXTRACT"
+tar -xzf "$TMP_ARCHIVE" -C "$TMP_EXTRACT" --strip-components=1
+rm -f "$TMP_ARCHIVE"
+
+# Copy everything except config.sh (user file) and state/ (runtime data).
+# config-template.sh is always updated from the repo.
+for f in "$TMP_EXTRACT"/*; do
+  name="$(basename "$f")"
+  case "$name" in
+    config.sh|state)
+      # Never overwrite – these belong to the user/runtime
+      ;;
+    *)
+      cp -r "$f" "${INSTALL_DIR}/${name}"
+      ;;
+  esac
+done
+
+rm -rf "$TMP_EXTRACT"
 
 chmod +x "${INSTALL_DIR}/setup.sh" \
          "${INSTALL_DIR}/uninstall.sh" \
          "${INSTALL_DIR}/init.d/tailscaled"
 
+echo "Files updated."
+
 # ---------------------------------------------------------------------------
-# 2. Ensure config.sh exists and is configured
+# 2. First install: create config.sh from template
 # ---------------------------------------------------------------------------
 if [ ! -f "$CONFIG" ]; then
-  echo "ERROR: config.sh not found in ${INSTALL_DIR}."
-  echo "       This should not happen – please check the repository."
-  exit 1
-fi
+  echo ""
+  echo "First install detected – creating config.sh from template..."
+  cp "$TEMPLATE" "$CONFIG"
 
-# Check whether the user has changed the placeholder device name.
-CURRENT_NAME="$(grep '^DEVICE_NAME=' "$CONFIG" | cut -d'"' -f2)"
-if [ "$CURRENT_NAME" = "my-ekrano" ]; then
   echo ""
   echo "============================================================"
   echo "  CONFIGURATION REQUIRED"
   echo ""
-  echo "  Open ${CONFIG} and set at least:"
-  echo "    DEVICE_NAME  – a short unique name for this device"
-  echo "    TAILSCALE_AUTH_KEY  – optional, for unattended auth"
+  echo "  Edit ${CONFIG} and set at least:"
+  echo "    DEVICE_NAME        – a short unique name for this device"
+  echo "    TAILSCALE_AUTH_KEY – optional, for unattended auth"
   echo ""
   echo "  Then re-run:  sh ${INSTALL_DIR}/setup.sh"
   echo "============================================================"
@@ -75,7 +86,6 @@ if [ "$CURRENT_NAME" = "my-ekrano" ]; then
   sleep 2
   vi "$CONFIG" || true
 
-  # Re-read after edit
   CURRENT_NAME="$(grep '^DEVICE_NAME=' "$CONFIG" | cut -d'"' -f2)"
   if [ "$CURRENT_NAME" = "my-ekrano" ]; then
     echo ""
@@ -83,6 +93,8 @@ if [ "$CURRENT_NAME" = "my-ekrano" ]; then
     echo "  sh ${INSTALL_DIR}/setup.sh"
     exit 0
   fi
+else
+  echo "Existing config.sh preserved."
 fi
 
 # ---------------------------------------------------------------------------
