@@ -201,13 +201,17 @@ else
           echo "    $trimmed"
           echo ""
           echo "  After logging in, remember to:"
-          echo "    1. Disable key expiry for EACH node registered below:"
-          echo "         ${DEVICE_NAME}-victron"
+          echo ""
+          echo "    1. Disable key expiry for the main node (Machines page):"
+          echo "         ${DEVICE_NAME}"
+          echo ""
+          echo "    2. Approve each service node (Services page):"
           echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
             svc="$(echo "$svc" | tr -d ' \t')"
-            [ -n "$svc" ] && echo "         ${DEVICE_NAME}-${svc}"
+            if [ -n "$svc" ]; then
+              echo "         ${DEVICE_NAME}-${svc}"
+            fi
           done
-          echo "    2. Approve each node if your tailnet requires approval."
           echo "============================================================"
           echo ""
           ;;
@@ -227,9 +231,12 @@ echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
   local_url="$(echo "$local_url" | tr -d ' \t')"
   path="$(echo "$path" | tr -d ' \t')"
 
-  [ -z "$svc" ] && continue
-
-  SERVICE_NAME="svc:${DEVICE_NAME}-${svc}"
+  # Empty suffix means the service is registered as exactly DEVICE_NAME (no dash).
+  if [ -z "$svc" ]; then
+    SERVICE_NAME="svc:${DEVICE_NAME}"
+  else
+    SERVICE_NAME="svc:${DEVICE_NAME}-${svc}"
+  fi
 
   # Check whether this exact service is already configured by querying its
   # own serve status. Using --service scopes the output to just this node,
