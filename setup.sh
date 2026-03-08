@@ -1,0 +1,220 @@
+#!/bin/sh
+# setup.sh – install, configure, and maintain victron-tailscale.
+#
+# Safe to run multiple times; each step checks whether it is already done.
+# Called directly by the user on first install and by the init.d script on
+# every boot (via --boot flag) to re-apply serve routes after a firmware
+# update wipes /usr/bin.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG="${SCRIPT_DIR}/config.sh"
+
+# ---------------------------------------------------------------------------
+# Load config
+# ---------------------------------------------------------------------------
+if [ ! -f "$CONFIG" ]; then
+  echo "ERROR: config.sh not found at ${CONFIG}"
+  echo "       Copy config.sh from the repo and edit it before running setup."
+  exit 1
+fi
+# shellcheck source=config.sh
+. "$CONFIG"
+
+BOOT_MODE=false
+[ "$1" = "--boot" ] && BOOT_MODE=true
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# ---------------------------------------------------------------------------
+# 1. Ensure directory structure
+# ---------------------------------------------------------------------------
+log "Ensuring directory structure..."
+mkdir -p "$STATE_DIR" "$TMP_DIR"
+
+# ---------------------------------------------------------------------------
+# 2. Install tailscale binaries if missing or outdated
+# ---------------------------------------------------------------------------
+fetch_latest_version() {
+  # Scrape the latest stable version for static binaries from the package index.
+  # The page lists files like tailscale_1.94.2_arm.tgz in the #static section.
+  # We grab the first version number that appears next to an arm tarball link.
+  wget -qO- "https://pkgs.tailscale.com/stable/" \
+    | grep -o 'tailscale_[0-9][0-9.]*_arm\.tgz' \
+    | head -n 1 \
+    | sed 's/tailscale_\([0-9][0-9.]*\)_arm\.tgz/\1/'
+}
+
+install_tailscale() {
+  # Resolve version: use pinned value from config, or auto-detect latest.
+  if [ -z "$TAILSCALE_VERSION" ]; then
+    log "TAILSCALE_VERSION not set – detecting latest stable version..."
+    TAILSCALE_VERSION="$(fetch_latest_version)"
+    if [ -z "$TAILSCALE_VERSION" ]; then
+      log "ERROR: could not detect latest Tailscale version. Set TAILSCALE_VERSION in config.sh."
+      exit 1
+    fi
+    log "Latest stable version: ${TAILSCALE_VERSION}"
+  fi
+
+  log "Installing tailscale ${TAILSCALE_VERSION} (${TAILSCALE_ARCH})..."
+
+  ARCHIVE="tailscale_${TAILSCALE_VERSION}_${TAILSCALE_ARCH}.tgz"
+  DOWNLOAD_URL="https://pkgs.tailscale.com/stable/${ARCHIVE}"
+  ARCHIVE_PATH="${TMP_DIR}/${ARCHIVE}"
+  EXTRACT_DIR="${TMP_DIR}/tailscale_extract"
+
+  log "Downloading ${DOWNLOAD_URL} ..."
+  wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL" || {
+    log "ERROR: download failed. Check TAILSCALE_DOWNLOAD_URL and network."
+    exit 1
+  }
+
+  mkdir -p "$EXTRACT_DIR"
+  tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
+
+  # The archive unpacks to a directory named tailscale_<version>_<arch>/
+  INNER_DIR="${EXTRACT_DIR}/tailscale_${TAILSCALE_VERSION}_${TAILSCALE_ARCH}"
+  cp "${INNER_DIR}/tailscaled" /usr/bin/tailscaled
+  cp "${INNER_DIR}/tailscale"  /usr/bin/tailscale
+  chmod +x /usr/bin/tailscaled /usr/bin/tailscale
+
+  # Clean up – /data space is limited
+  rm -rf "$ARCHIVE_PATH" "$EXTRACT_DIR"
+  log "tailscale ${TAILSCALE_VERSION} installed."
+}
+
+NEED_INSTALL=false
+if ! command -v tailscale >/dev/null 2>&1; then
+  NEED_INSTALL=true
+elif [ -n "$TAILSCALE_VERSION" ]; then
+  # Only enforce a version check when a specific version is pinned in config.
+  INSTALLED_VER="$(tailscale version 2>/dev/null | head -n 1 | awk '{print $1}')"
+  if [ "$INSTALLED_VER" != "$TAILSCALE_VERSION" ]; then
+    log "Installed version (${INSTALLED_VER}) differs from pinned (${TAILSCALE_VERSION})."
+    NEED_INSTALL=true
+  fi
+else
+  log "tailscale already installed: $(tailscale version 2>/dev/null | head -n 1)"
+fi
+
+$NEED_INSTALL && install_tailscale
+
+# ---------------------------------------------------------------------------
+# 3. Install init.d script
+# ---------------------------------------------------------------------------
+INITD_SRC="${SCRIPT_DIR}/init.d/tailscaled"
+INITD_DST="/etc/init.d/tailscaled"
+
+if [ ! -f "$INITD_DST" ] || ! diff -q "$INITD_SRC" "$INITD_DST" >/dev/null 2>&1; then
+  log "Installing init.d script..."
+  cp "$INITD_SRC" "$INITD_DST"
+  chmod +x "$INITD_DST"
+  # Register with update-rc.d if available, otherwise use symlinks
+  if command -v update-rc.d >/dev/null 2>&1; then
+    update-rc.d tailscaled defaults >/dev/null 2>&1 || true
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Start tailscaled if not running
+# ---------------------------------------------------------------------------
+if ! pgrep tailscaled >/dev/null 2>&1; then
+  log "Starting tailscaled..."
+  /etc/init.d/tailscaled start
+  sleep 3
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Authenticate / bring up the tailscale node
+# ---------------------------------------------------------------------------
+TS_STATUS="$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || echo 'unknown')"
+log "Tailscale backend state: ${TS_STATUS}"
+
+if [ "$TS_STATUS" != "Running" ]; then
+  log "Authenticating with Tailscale..."
+
+  UP_ARGS="--hostname=${DEVICE_NAME}-victron"
+
+  if [ -n "$TAILSCALE_LOGIN_SERVER" ]; then
+    UP_ARGS="${UP_ARGS} --login-server=${TAILSCALE_LOGIN_SERVER}"
+  fi
+
+  if [ "$ENABLE_SSH" = "true" ]; then
+    UP_ARGS="${UP_ARGS} --ssh"
+  fi
+
+  if [ -n "$TAILSCALE_AUTH_KEY" ]; then
+    UP_ARGS="${UP_ARGS} --authkey=${TAILSCALE_AUTH_KEY}"
+    # shellcheck disable=SC2086
+    tailscale up $UP_ARGS
+  else
+    # Interactive login – print the URL prominently so the user sees it.
+    # shellcheck disable=SC2086
+    tailscale up $UP_ARGS --qr 2>&1 | tee /dev/stderr &
+    TS_UP_PID=$!
+
+    echo ""
+    echo "============================================================"
+    echo "  ACTION REQUIRED – open the URL above in your browser to"
+    echo "  authenticate this device with Tailscale."
+    echo ""
+    echo "  After logging in, remember to:"
+    echo "    1. Disable key expiry for EACH node registered below:"
+    echo "         ${DEVICE_NAME}-victron"
+    # Print service node names
+    echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
+      echo "         ${DEVICE_NAME}-${svc}"
+    done
+    echo "    2. Approve each node if your tailnet requires approval."
+    echo "============================================================"
+    echo ""
+
+    wait $TS_UP_PID
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Configure Tailscale Serve routes (idempotent)
+# ---------------------------------------------------------------------------
+log "Applying Tailscale Serve configuration..."
+
+echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
+  # Trim whitespace
+  svc="$(echo "$svc" | tr -d ' \t')"
+  local_url="$(echo "$local_url" | tr -d ' \t')"
+  path="$(echo "$path" | tr -d ' \t')"
+
+  [ -z "$svc" ] && continue
+
+  SERVICE_NAME="svc:${DEVICE_NAME}-${svc}"
+  log "  Serving ${SERVICE_NAME}  ${path} → ${local_url}${path}"
+
+  tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" || {
+    log "  WARNING: failed to configure serve for ${SERVICE_NAME}"
+  }
+done
+
+# ---------------------------------------------------------------------------
+# 7. Done
+# ---------------------------------------------------------------------------
+log "Setup complete."
+
+if ! $BOOT_MODE; then
+  echo ""
+  echo "============================================================"
+  echo "  victron-tailscale is running."
+  echo ""
+  echo "  Your services:"
+  echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _local _path; do
+    svc="$(echo "$svc" | tr -d ' \t')"
+    [ -z "$svc" ] && continue
+    echo "    https://${DEVICE_NAME}-${svc}.<tailnet>.ts.net"
+  done
+  echo ""
+  echo "  Run 'tailscale status' to see all nodes."
+  echo "============================================================"
+fi
