@@ -4,11 +4,11 @@ Adds [Tailscale](https://tailscale.com) to a Victron Ekrano (or Cerbo GX) and ex
 
 ## How it works
 
-Victron firmware updates wipe `/usr/bin` but leave `/data` intact. This module:
+Victron firmware updates wipe `/usr/bin` and `/etc/init.d` but leave `/data` intact. This module uses `/data/rc.local` — the [Victron-native boot hook](https://www.victronenergy.com/live/ccgx:root_access#hooks_to_installrun_own_code_at_boot) that survives firmware updates — to re-apply everything on each boot:
 
-1. Stores the Tailscale state and binaries reference under `/data/victron-tailscale`.
-2. Registers an init.d service that starts `tailscaled` and calls `setup.sh --boot` on every boot.
-3. `setup.sh` detects missing binaries, re-downloads them if needed, and re-applies all `tailscale serve` routes.
+1. `setup.sh` registers itself in `/data/rc.local` on first install.
+2. On every boot, `rc.local` calls `setup.sh --boot`, which re-installs the Tailscale binaries if missing, re-installs the init.d script, and re-applies all `tailscale serve` routes.
+3. Tailscale state is stored under `/data/victron-tailscale/state/` and is never wiped.
 
 ### Why separate service nodes?
 
@@ -146,16 +146,18 @@ By default `setup.sh` fetches the latest stable version from `https://pkgs.tails
 ## File layout
 
 ```
-/data/victron-tailscale/
-├── config.sh          # your configuration (edit this)
-├── setup.sh           # install / re-apply configuration
-├── install.sh         # bootstrap script (fetched from GitHub)
-├── uninstall.sh       # full removal
-├── init.d/
-│   └── tailscaled     # init.d service script (copied to /etc/init.d/)
-├── state/
-│   └── tailscaled.state   # Tailscale persistent state (survives reboots)
-└── tmp/               # temporary download directory (auto-cleaned)
+/data/
+├── rc.local                        # Victron boot hook (created/updated by setup.sh)
+└── victron-tailscale/
+    ├── config.sh                   # your configuration (edit this)
+    ├── setup.sh                    # install / re-apply configuration
+    ├── install.sh                  # bootstrap script (fetched from GitHub)
+    ├── uninstall.sh                # full removal
+    ├── init.d/
+    │   └── tailscaled              # init.d script (copied to /etc/init.d/ on each boot)
+    ├── state/
+    │   └── tailscaled.state        # Tailscale persistent state (survives firmware updates)
+    └── tmp/                        # temporary download directory (auto-cleaned)
 ```
 
 ---

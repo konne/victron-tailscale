@@ -2,9 +2,10 @@
 # setup.sh – install, configure, and maintain victron-tailscale.
 #
 # Safe to run multiple times; each step checks whether it is already done.
-# Called directly by the user on first install and by the init.d script on
-# every boot (via --boot flag) to re-apply serve routes after a firmware
-# update wipes /usr/bin.
+# Called directly by the user on first install, and automatically on every
+# boot via /data/rc.local (the Victron-native hook that survives firmware
+# updates). Firmware updates wipe /usr/bin and /etc/init.d; this script
+# re-installs both on the next boot.
 
 set -e
 
@@ -104,7 +105,27 @@ fi
 $NEED_INSTALL && install_tailscale
 
 # ---------------------------------------------------------------------------
-# 3. Install init.d script
+# 3. Register in /data/rc.local (the Victron-native boot hook)
+# ---------------------------------------------------------------------------
+# /data/rc.local survives firmware updates; /etc/init.d does not.
+# We add a single line that calls this setup.sh on every boot.
+# The line is guarded so it is only added once.
+RC_LOCAL="/data/rc.local"
+RC_ENTRY="sh ${SCRIPT_DIR}/setup.sh --boot"
+
+if [ ! -f "$RC_LOCAL" ]; then
+  log "Creating ${RC_LOCAL}..."
+  printf '#!/bin/sh\n%s\n' "$RC_ENTRY" > "$RC_LOCAL"
+  chmod +x "$RC_LOCAL"
+elif ! grep -qF "$RC_ENTRY" "$RC_LOCAL"; then
+  log "Adding victron-tailscale entry to ${RC_LOCAL}..."
+  echo "$RC_ENTRY" >> "$RC_LOCAL"
+else
+  log "${RC_LOCAL} already contains victron-tailscale entry."
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Install init.d script
 # ---------------------------------------------------------------------------
 INITD_SRC="${SCRIPT_DIR}/init.d/tailscaled"
 INITD_DST="/etc/init.d/tailscaled"

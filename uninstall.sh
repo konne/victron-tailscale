@@ -59,7 +59,23 @@ if command -v tailscale >/dev/null 2>&1 && pgrep tailscaled >/dev/null 2>&1; the
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Stop and remove init.d script
+# 3. Remove entry from /data/rc.local
+# ---------------------------------------------------------------------------
+RC_LOCAL="/data/rc.local"
+if [ -f "$RC_LOCAL" ]; then
+  echo "Removing victron-tailscale entry from ${RC_LOCAL}..."
+  # Remove the line that references this module's setup.sh
+  sed -i "\|victron-tailscale|d" "$RC_LOCAL"
+  # If the file is now empty (or only the shebang), remove it entirely
+  REMAINING="$(grep -v '^#' "$RC_LOCAL" | grep -v '^[[:space:]]*$' || true)"
+  if [ -z "$REMAINING" ]; then
+    echo "  ${RC_LOCAL} is now empty – removing."
+    rm -f "$RC_LOCAL"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Stop and remove init.d script
 # ---------------------------------------------------------------------------
 if [ -f /etc/init.d/tailscaled ]; then
   echo "Stopping tailscaled..."
