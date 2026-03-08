@@ -187,8 +187,10 @@ else
     # and extract the URL from its output.
     # shellcheck disable=SC2086
     tailscale up $UP_ARGS 2>&1 | while IFS= read -r line; do
-      # tailscale prints the auth URL on a line starting with "https://"
-      case "$line" in
+      # Strip leading whitespace to reliably match the URL line.
+      # tailscale prints "To authenticate, visit:" then the URL indented.
+      trimmed="$(echo "$line" | sed 's/^[[:space:]]*//')"
+      case "$trimmed" in
         https://*)
           echo ""
           echo "============================================================"
@@ -196,7 +198,7 @@ else
           echo ""
           echo "  Open this URL in your browser:"
           echo ""
-          echo "    $line"
+          echo "    $trimmed"
           echo ""
           echo "  After logging in, remember to:"
           echo "    1. Disable key expiry for EACH node registered below:"
