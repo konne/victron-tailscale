@@ -181,28 +181,36 @@ else
     # shellcheck disable=SC2086
     tailscale up $UP_ARGS
   else
-    # Interactive login – print the URL prominently so the user sees it.
+    # Interactive login – capture the auth URL and print it cleanly.
+    # --qr is omitted (QR output is garbled on serial/SSH terminals).
+    # tailscale up blocks until authenticated, so run it in the background
+    # and extract the URL from its output.
     # shellcheck disable=SC2086
-    tailscale up $UP_ARGS --qr 2>&1 | tee /dev/stderr &
-    TS_UP_PID=$!
-
-    echo ""
-    echo "============================================================"
-    echo "  ACTION REQUIRED – open the URL above in your browser to"
-    echo "  authenticate this device with Tailscale."
-    echo ""
-    echo "  After logging in, remember to:"
-    echo "    1. Disable key expiry for EACH node registered below:"
-    echo "         ${DEVICE_NAME}-victron"
-    echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
-      svc="$(echo "$svc" | tr -d ' \t')"
-      [ -n "$svc" ] && echo "         ${DEVICE_NAME}-${svc}"
+    tailscale up $UP_ARGS 2>&1 | while IFS= read -r line; do
+      # tailscale prints the auth URL on a line starting with "https://"
+      case "$line" in
+        https://*)
+          echo ""
+          echo "============================================================"
+          echo "  ACTION REQUIRED – authenticate this device with Tailscale"
+          echo ""
+          echo "  Open this URL in your browser:"
+          echo ""
+          echo "    $line"
+          echo ""
+          echo "  After logging in, remember to:"
+          echo "    1. Disable key expiry for EACH node registered below:"
+          echo "         ${DEVICE_NAME}-victron"
+          echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
+            svc="$(echo "$svc" | tr -d ' \t')"
+            [ -n "$svc" ] && echo "         ${DEVICE_NAME}-${svc}"
+          done
+          echo "    2. Approve each node if your tailnet requires approval."
+          echo "============================================================"
+          echo ""
+          ;;
+      esac
     done
-    echo "    2. Approve each node if your tailnet requires approval."
-    echo "============================================================"
-    echo ""
-
-    wait $TS_UP_PID
   fi
 fi
 
