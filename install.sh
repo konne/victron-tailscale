@@ -81,10 +81,18 @@ if [ ! -f "$CONFIG" ]; then
   echo ""
   echo "  Then re-run:  sh ${INSTALL_DIR}/setup.sh"
   echo "============================================================"
-  echo ""
-  echo "Opening config.sh in vi (Ctrl-C to skip)..."
-  sleep 2
-  vi "$CONFIG" || true
+  # Only open an editor when running interactively (stdin is a TTY).
+  # When piped from wget | sh there is no TTY and opening an editor
+  # would hang waiting for input.
+  if [ -t 0 ]; then
+    echo "Opening config.sh in nano..."
+    nano "$CONFIG" || true
+  else
+    echo ""
+    echo "  (Running non-interactively – skipping editor.)"
+    echo "  Edit ${CONFIG} manually and run:  sh ${INSTALL_DIR}/setup.sh"
+    exit 0
+  fi
 
   CURRENT_NAME="$(grep '^DEVICE_NAME=' "$CONFIG" | cut -d'"' -f2)"
   if [ "$CURRENT_NAME" = "my-ekrano" ]; then

@@ -8,11 +8,13 @@
 # Device identity
 # ---------------------------------------------------------------------------
 
-# Base hostname used for all Tailscale service names.
-# The device will register as:
-#   <DEVICE_NAME>-victron        (main HTTPS proxy)
-#   <DEVICE_NAME>-nodered        (Node-RED full UI)
-#   <DEVICE_NAME>-ui             (Node-RED /ui dashboard only)
+# Base hostname used for all Tailscale node names.
+# A service with an empty suffix registers as exactly DEVICE_NAME.
+# A service with a suffix registers as DEVICE_NAME-suffix.
+# Example with DEVICE_NAME="myboat":
+#   (empty suffix) -> svc:myboat          (Victron UI)
+#   nodered        -> svc:myboat-nodered  (Node-RED editor)
+#   ui             -> svc:myboat-ui       (Node-RED dashboard)
 # Keep it short, lowercase, no spaces.
 DEVICE_NAME="my-ekrano"
 
@@ -49,18 +51,22 @@ ENABLE_SSH=true
 # Each service creates a separate Tailscale node so that HTTPS (443) can be
 # served per-service without conflicting with the device's local HTTPS port.
 #
-# Format: "service-suffix|local-url|path-prefix"
-#   service-suffix  appended to DEVICE_NAME, e.g. "victron" -> svc:<DEVICE_NAME>-victron
-#   local-url       the local endpoint to proxy (https+insecure:// for self-signed certs)
-#   path-prefix     URL path to expose; use "/" for the whole site
+# Format: "suffix|local-url|path"
+#   suffix    appended to DEVICE_NAME with a dash, e.g. "nodered" -> svc:NAME-nodered
+#             leave empty to register as exactly DEVICE_NAME (no dash), e.g. svc:NAME
+#   local-url the local endpoint to proxy (https+insecure:// for self-signed certs)
+#   path      URL path to expose; use "/" for the whole site
 #
-# The three default services mirror the original setup:
-#   *-victron   -> Victron Ekrano web UI  (port 443)
-#   *-nodered   -> Node-RED editor        (port 1881, full path)
-#   *-ui        -> Node-RED dashboard     (port 1881, /ui only)
+# Default services:
+#   (empty)  -> svc:NAME          Victron Ekrano web UI  (port 443)
+#   nodered  -> svc:NAME-nodered  Node-RED editor        (port 1881)
+#   ui       -> svc:NAME-ui       Node-RED dashboard     (port 1881, /ui only)
+#
+# Only the main node (empty suffix / svc:NAME) needs key expiry disabled in
+# the Tailscale admin console. Each svc:NAME-* service node needs approval.
 
 SERVICES="
-victron|https+insecure://localhost:443|/
+|https+insecure://localhost:443|/
 nodered|https+insecure://localhost:1881|/
 ui|https+insecure://localhost:1881|/ui
 "
