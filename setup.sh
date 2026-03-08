@@ -155,8 +155,10 @@ fi
 TS_STATUS="$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || echo 'unknown')"
 log "Tailscale backend state: ${TS_STATUS}"
 
-if [ "$TS_STATUS" != "Running" ]; then
-  log "Authenticating with Tailscale..."
+if [ "$TS_STATUS" = "Running" ]; then
+  log "Tailscale is already authenticated and running – skipping tailscale up."
+else
+  log "Tailscale not running (state: ${TS_STATUS}) – authenticating..."
 
   UP_ARGS="--hostname=${DEVICE_NAME}-victron"
 
@@ -186,9 +188,9 @@ if [ "$TS_STATUS" != "Running" ]; then
     echo "  After logging in, remember to:"
     echo "    1. Disable key expiry for EACH node registered below:"
     echo "         ${DEVICE_NAME}-victron"
-    # Print service node names
     echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
-      echo "         ${DEVICE_NAME}-${svc}"
+      svc="$(echo "$svc" | tr -d ' \t')"
+      [ -n "$svc" ] && echo "         ${DEVICE_NAME}-${svc}"
     done
     echo "    2. Approve each node if your tailnet requires approval."
     echo "============================================================"
@@ -201,7 +203,7 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Configure Tailscale Serve routes (idempotent)
 # ---------------------------------------------------------------------------
-log "Applying Tailscale Serve configuration..."
+log "Checking Tailscale Serve configuration..."
 
 echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
   # Trim whitespace
@@ -212,11 +214,19 @@ echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
   [ -z "$svc" ] && continue
 
   SERVICE_NAME="svc:${DEVICE_NAME}-${svc}"
-  log "  Serving ${SERVICE_NAME}  ${path} → ${local_url}${path}"
 
-  tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" || {
-    log "  WARNING: failed to configure serve for ${SERVICE_NAME}"
-  }
+  # Check whether this exact service is already configured by querying its
+  # own serve status. Using --service scopes the output to just this node,
+  # avoiding false matches when multiple services share the same local port.
+  SVC_STATUS="$(tailscale serve --service="$SERVICE_NAME" status 2>/dev/null || true)"
+  if echo "$SVC_STATUS" | grep -qF "$local_url"; then
+    log "  ${SERVICE_NAME}: already configured – skipping."
+  else
+    log "  ${SERVICE_NAME}: configuring ${path} -> ${local_url}${path}"
+    tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" || {
+      log "  WARNING: failed to configure serve for ${SERVICE_NAME}"
+    }
+  fi
 done
 
 # ---------------------------------------------------------------------------
