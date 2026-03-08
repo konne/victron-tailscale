@@ -158,7 +158,7 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Authenticate / bring up the tailscale node
 # ---------------------------------------------------------------------------
-TS_STATUS="$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || echo 'unknown')"
+TS_STATUS="$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "unknown"' 2>/dev/null || echo 'unknown')"
 log "Tailscale backend state: ${TS_STATUS}"
 
 if [ "$TS_STATUS" = "Running" ]; then
