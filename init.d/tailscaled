@@ -1,0 +1,73 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          tailscaled
+# Required-Start:    $local_fs $network $syslog
+# Required-Stop:     $local_fs $network $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Tailscale daemon
+# Description:       Runs tailscaled and re-applies serve config on each boot.
+### END INIT INFO
+
+DAEMON=/usr/bin/tailscaled
+TAILSCALE=/usr/bin/tailscale
+MODULE_DIR=/data/victron-tailscale
+STATE_DIR=${MODULE_DIR}/state
+PIDFILE=/var/run/tailscaled.pid
+CONFIG=${MODULE_DIR}/config.sh
+
+test -x "$DAEMON" || exit 0
+
+# Load config if present so DEVICE_NAME etc. are available for setup.
+# shellcheck source=/dev/null
+[ -f "$CONFIG" ] && . "$CONFIG"
+
+case "$1" in
+  start)
+    echo "Starting tailscaled"
+    start-stop-daemon \
+      --start \
+      --background \
+      --pidfile "$PIDFILE" \
+      --make-pidfile \
+      --chuid root:root \
+      --startas "$DAEMON" \
+      -- --state="${STATE_DIR}/tailscaled.state"
+
+    # Give the daemon a moment to open its socket before we talk to it.
+    sleep 2
+
+    # Re-apply configuration (idempotent – skips steps already done).
+    if [ -f "${MODULE_DIR}/setup.sh" ]; then
+      sh "${MODULE_DIR}/setup.sh" --boot >> "${MODULE_DIR}/setup.log" 2>&1 &
+    fi
+    ;;
+
+  stop)
+    echo "Stopping tailscaled"
+    start-stop-daemon --stop --pidfile "$PIDFILE" --retry 10
+    ;;
+
+  restart)
+    "$0" stop
+    sleep 1
+    "$0" start
+    ;;
+
+  status)
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "tailscaled is running (pid $(cat "$PIDFILE"))"
+      "$TAILSCALE" status 2>/dev/null || true
+    else
+      echo "tailscaled is not running"
+      exit 1
+    fi
+    ;;
+
+  *)
+    echo "Usage: /etc/init.d/tailscaled {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
