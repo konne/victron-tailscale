@@ -160,6 +160,7 @@ By default `setup.sh` fetches the latest stable version from `https://pkgs.tails
     ├── config-template.sh          # template – updated by installer, never edit this
     ├── config.sh                   # your config – created from template, never overwritten
     ├── boot-common.sh              # boot hook and rootfs preparation
+    ├── serve-common.sh             # apply each configured service route
     ├── setup.sh                    # install / re-apply configuration
     ├── install.sh                  # bootstrap script (fetched from GitHub)
     ├── uninstall.sh                # full removal
@@ -252,3 +253,18 @@ python3 -m unittest discover -s tests -v
 ```
 
 Tests use temporary files and mocked system commands. On-device validation requires a controlled reboot with internet available.
+
+### A service has zero hosts despite “already configured”
+
+Older setup versions searched human-readable Serve status for a backend URL. In Tailscale 1.104.1, `tailscale serve --service=... status` still lists all services. Since the editor and dashboard share `localhost:1881`, the editor route could cause setup to skip the dashboard.
+
+Setup now applies each configured service and its complete target URL on every run. This also re-advertises configured services; a deliberately drained service listed in `SERVICES` will be advertised again by setup. Tailscale approval messages are logged, and a Serve command failure makes setup fail rather than report success. Local configuration does not confirm admin approval or backend health.
+
+For the default dashboard service with `DEVICE_NAME="camper"`, the equivalent targeted repair is:
+
+```sh
+tailscale serve --bg --service=svc:camper-ui --https=443 https+insecure://localhost:1881/ui
+tailscale serve status --json
+```
+
+Then open **Services → camper-ui** in the admin console and approve the Ekrano host if approval is pending. No device reboot is required.

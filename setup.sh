@@ -227,44 +227,10 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Configure Tailscale Serve routes (idempotent)
 # ---------------------------------------------------------------------------
-log "Checking Tailscale Serve configuration..."
-
-echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc local_url path; do
-  # Trim whitespace
-  svc="$(echo "$svc" | tr -d ' \t')"
-  local_url="$(echo "$local_url" | tr -d ' \t')"
-  path="$(echo "$path" | tr -d ' \t')"
-
-  # Empty suffix means the service is registered as exactly DEVICE_NAME (no dash).
-  if [ -z "$svc" ]; then
-    SERVICE_NAME="svc:${DEVICE_NAME}"
-  else
-    SERVICE_NAME="svc:${DEVICE_NAME}-${svc}"
-  fi
-
-  # Check whether this exact service is already configured by querying its
-  # own serve status. Using --service scopes the output to just this node,
-  # avoiding false matches when multiple services share the same local port.
-  SVC_STATUS="$(tailscale serve --service="$SERVICE_NAME" status 2>/dev/null || true)"
-  if echo "$SVC_STATUS" | grep -qF "$local_url"; then
-    log "  ${SERVICE_NAME}: already configured – skipping."
-  else
-    log "  ${SERVICE_NAME}: configuring ${path} -> ${local_url}${path}"
-    SERVE_ERR="$(tailscale serve --service="$SERVICE_NAME" "${local_url}${path}" 2>&1)" || {
-      if echo "$SERVE_ERR" | grep -q "tagged nodes"; then
-        log "  ERROR: this node must be a tagged node to host Tailscale services."
-        log "         To fix this:"
-        log "         1. Open https://login.tailscale.com/admin/acls"
-        log "            Add a tag, e.g.:  \"tagOwners\": { \"tag:server\": [] }"
-        log "         2. Re-authenticate with that tag:"
-        log "            tailscale up --advertise-tags=tag:server --reset"
-        log "         3. Re-run setup.sh"
-      else
-        log "  WARNING: failed to configure serve for ${SERVICE_NAME}: ${SERVE_ERR}"
-      fi
-    }
-  fi
-done
+log "Applying Tailscale Serve configuration..."
+. "${SCRIPT_DIR}/serve-common.sh"
+configure_services
+log "Local routes applied. Host approval and availability must be checked in the Tailscale Services console."
 
 # ---------------------------------------------------------------------------
 # 7. Done
@@ -274,15 +240,18 @@ log "Setup complete."
 if ! $BOOT_MODE; then
   echo ""
   echo "============================================================"
-  echo "  victron-tailscale is running."
+  echo "  Local Tailscale setup is complete; services may need host approval."
   echo ""
   echo "  Your services:"
   echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _local _path; do
     svc="$(echo "$svc" | tr -d ' \t')"
-    [ -z "$svc" ] && continue
-    echo "    https://${DEVICE_NAME}-${svc}.<tailnet>.ts.net"
+    if [ -z "$svc" ]; then
+      echo "    https://${DEVICE_NAME}.<tailnet>.ts.net"
+    else
+      echo "    https://${DEVICE_NAME}-${svc}.<tailnet>.ts.net"
+    fi
   done
   echo ""
-  echo "  Run 'tailscale status' to see all nodes."
+  echo "  Run 'tailscale serve status' to see local service routes."
   echo "============================================================"
 fi

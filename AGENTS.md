@@ -39,3 +39,10 @@ This file tracks significant changes made by AI agents (Ona / Claude) to this re
 - Ship runnable scripts with executable permissions and protect sourced config with mode 600.
 - Keep internet-based binary downloads and existing state storage; no persistent binary cache or automatic retry loop.
 - Added isolated regression checks for hook migration, permissions, remount failure, and early boot logging. Actual reboot verification is still required on the device.
+
+## 2026-10-08 – Missing dashboard service (Codex)
+
+- Found that Tailscale 1.104.1 Serve status is global even with the parent `--service` flag; shared port 1881 caused the editor route to falsely satisfy the UI check.
+- Apply every named service with its complete proxy target, preserve CLI approval notices, and fail setup when a Serve command fails.
+- Clarify that local route configuration does not establish admin approval or backend health; include the base service in the printed URLs.
+- Added mocked regressions for shared backends, re-advertising existing routes, approval output, and command failure.
