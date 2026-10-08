@@ -1,13 +1,13 @@
 # victron-tailscale
 
-Adds [Tailscale](https://tailscale.com) to a Victron Ekrano (or Cerbo GX) and exposes the device's web interfaces as named Tailscale services. The module lives entirely under `/data/victron-tailscale`, which survives Victron firmware updates. On each boot the init.d script re-applies the configuration, so a firmware update only requires a reboot to restore full connectivity.
+Adds [Tailscale](https://tailscale.com) to a Victron Ekrano (or Cerbo GX) and exposes the device's web interfaces as named Tailscale services. The module scripts and state live under `/data/victron-tailscale`, which survives firmware updates. Binaries in `/usr/bin` and the init script in `/etc/init.d` are restored by the persistent boot hook. Firmware updates already include a reboot; recovery requires internet when binaries must be downloaded.
 
 ## How it works
 
 Victron firmware updates wipe `/usr/bin` and `/etc/init.d` but leave `/data` intact. This module uses `/data/rc.local` — the [Victron-native boot hook](https://www.victronenergy.com/live/ccgx:root_access#hooks_to_installrun_own_code_at_boot) that survives firmware updates — to re-apply everything on each boot:
 
-1. `setup.sh` registers itself in `/data/rc.local` on first install.
-2. On every boot, `rc.local` calls `setup.sh --boot`, which re-installs the Tailscale binaries if missing, re-installs the init.d script, and re-applies all `tailscale serve` routes.
+1. Manual `setup.sh` registers itself in executable `/data/rc.local` before downloads, preserving other hooks and placing its entry before any exit.
+2. On every boot, `rc.local` starts `setup.sh --boot` in the background. Setup logs from its first step, remounts the root filesystem read/write when needed, restores missing binaries and init script, and applies the configured routes. The root filesystem remains writable until reboot. Failure to remount stops setup before system changes.
 3. Tailscale state is stored under `/data/victron-tailscale/state/` and is never wiped.
 
 ### Why separate service nodes?
@@ -33,9 +33,9 @@ wget -qO- https://raw.githubusercontent.com/konne/victron-tailscale/main/install
 ```
 
 The installer will:
-1. Clone the repo to `/data/victron-tailscale`
-2. Open `config.sh` in `vi` so you can set your device name and optional auth key
-3. Run `setup.sh` to install Tailscale and configure everything
+1. Download the repository archive into `/data/victron-tailscale`
+2. On first install, create private `config.sh` and ask you to edit it. The piped installer stops here; run `vi /data/victron-tailscale/config.sh`, then `sh /data/victron-tailscale/setup.sh`.
+3. On subsequent installs, preserve your config and state, then run setup.
 
 ### Manual install
 
@@ -59,6 +59,8 @@ sh /data/victron-tailscale/setup.sh
 ## Configuration
 
 The repo ships [`config-template.sh`](config-template.sh). On first install this is copied to `config.sh` (your local config). Updates never touch `config.sh` or the `state/` directory, so your settings and Tailscale state are always preserved.
+
+`config.sh` is sourced configuration, not a command to execute. It does not need executable permission. Setup and installation protect it with mode `600` because it may contain an auth key. After editing it, run `sh /data/victron-tailscale/setup.sh`.
 
 All options are in `config.sh`. The key settings:
 
@@ -86,7 +88,7 @@ Generate a reusable key at <https://login.tailscale.com/admin/settings/keys>.
 TAILSCALE_AUTH_KEY=""
 ```
 
-`setup.sh` will print a login URL and QR code. Open the URL in a browser to authenticate.
+`setup.sh` will print a login URL. Open the URL in a browser to authenticate.
 
 > **After first login (Option B), you must:**
 > 1. Go to <https://login.tailscale.com/admin/machines>
@@ -157,6 +159,7 @@ By default `setup.sh` fetches the latest stable version from `https://pkgs.tails
 └── victron-tailscale/
     ├── config-template.sh          # template – updated by installer, never edit this
     ├── config.sh                   # your config – created from template, never overwritten
+    ├── boot-common.sh              # boot hook and rootfs preparation
     ├── setup.sh                    # install / re-apply configuration
     ├── install.sh                  # bootstrap script (fetched from GitHub)
     ├── uninstall.sh                # full removal
@@ -219,7 +222,7 @@ sh /data/victron-tailscale/setup.sh
 ```
 
 **tailscale not found after firmware update:**
-Reboot the device. The init.d script will detect the missing binary, download it, and re-apply the configuration automatically.
+Check `setup.log` first. The `/data/rc.local` hook restores missing binaries; the init script alone cannot do that. Boot logging starts before config loading or downloading and includes boot ID and exit status. If a download failed, connect to the internet and re-run setup or reboot. If there is no boot entry, check executable permission on `/data/rc.local` and Settings → General → Modification checks → Modifications enabled. A firmware update already includes a reboot.
 
 **`service hosts must be tagged nodes` error:**
 Tailscale requires the device to be a tagged node (not a user node) to host `svc:` services. Fix:
@@ -235,3 +238,17 @@ Tailscale requires the device to be a tagged node (not a user node) to host `svc
    tailscale up --advertise-tags=tag:server --reset
    ```
 3. Re-run `setup.sh`.
+
+## Recovery and verification
+
+Binaries continue to be downloaded into `/usr/bin`; downloaded archives are removed. No persistent binary cache or retry loop is used. `install.sh`, `setup.sh`, `uninstall.sh`, and `init.d/tailscaled` are executable in both the repository and installer.
+
+Boot runs capture all output in `setup.log`, including errors before the init script exists. Manual runs display output in the terminal and record status messages in the log. They never issue a device reboot.
+
+Run isolated regression checks on a development machine:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+Tests use temporary files and mocked system commands. On-device validation requires a controlled reboot with internet available.

@@ -12,6 +12,32 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="${SCRIPT_DIR}/config.sh"
 TEMPLATE="${SCRIPT_DIR}/config-template.sh"
+BOOT_MODE=false
+[ "${1:-}" = "--boot" ] && BOOT_MODE=true
+LOG_FILE="${SCRIPT_DIR}/setup.log"
+# Capture even config-load and download errors on boot, before init.d exists.
+if $BOOT_MODE; then
+  exec >> "$LOG_FILE" 2>&1
+fi
+log() {
+  if $BOOT_MODE; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $*"
+  else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $*" | tee -a "$LOG_FILE"
+  fi
+}
+trap 'result=$?; log "Setup finished with exit code $result"' 0
+log "Starting victron-tailscale setup (boot=$BOOT_MODE, pid=$$)..."
+if [ -r /proc/sys/kernel/random/boot_id ]; then
+  log "Boot ID: $(cat /proc/sys/kernel/random/boot_id)"
+fi
+. "${SCRIPT_DIR}/boot-common.sh"
+RC_LOCAL="/data/rc.local"
+SETUP_SCRIPT="${SCRIPT_DIR}/setup.sh"
+MARKER="victron-tailscale"
+if ! $BOOT_MODE; then
+  register_boot_hook
+fi
 
 # ---------------------------------------------------------------------------
 # Load config (create from template on first run)
@@ -21,6 +47,7 @@ if [ ! -f "$CONFIG" ]; then
     echo "No config.sh found – copying from config-template.sh."
     echo "Edit ${CONFIG} to set your DEVICE_NAME before continuing."
     cp "$TEMPLATE" "$CONFIG"
+    chmod 600 "$CONFIG"
   fi
   echo "ERROR: config.sh not found at ${CONFIG}"
   echo "       Edit it and re-run setup.sh."
@@ -29,12 +56,9 @@ fi
 # shellcheck source=config-template.sh
 . "$CONFIG"
 
-BOOT_MODE=false
-[ "$1" = "--boot" ] && BOOT_MODE=true
-
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
-}
+# config.sh is sourced data, not a runnable command; it may contain an auth key.
+chmod 600 "$CONFIG"
+prepare_rootfs
 
 # ---------------------------------------------------------------------------
 # 1. Ensure directory structure
@@ -76,7 +100,7 @@ install_tailscale() {
 
   log "Downloading ${DOWNLOAD_URL} ..."
   wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL" || {
-    log "ERROR: download failed. Check TAILSCALE_DOWNLOAD_URL and network."
+    log "ERROR: download failed. Check TAILSCALE_VERSION and internet connectivity; rerun setup or reboot once online."
     exit 1
   }
 
@@ -109,26 +133,6 @@ else
 fi
 
 $NEED_INSTALL && install_tailscale
-
-# ---------------------------------------------------------------------------
-# 3. Register in /data/rc.local (the Victron-native boot hook)
-# ---------------------------------------------------------------------------
-# /data/rc.local survives firmware updates; /etc/init.d does not.
-# We add a single line that calls this setup.sh on every boot.
-# The line is guarded so it is only added once.
-RC_LOCAL="/data/rc.local"
-RC_ENTRY="sh ${SCRIPT_DIR}/setup.sh --boot"
-
-if [ ! -f "$RC_LOCAL" ]; then
-  log "Creating ${RC_LOCAL}..."
-  printf '#!/bin/sh\n%s\n' "$RC_ENTRY" > "$RC_LOCAL"
-  chmod +x "$RC_LOCAL"
-elif ! grep -qF "$RC_ENTRY" "$RC_LOCAL"; then
-  log "Adding victron-tailscale entry to ${RC_LOCAL}..."
-  echo "$RC_ENTRY" >> "$RC_LOCAL"
-else
-  log "${RC_LOCAL} already contains victron-tailscale entry."
-fi
 
 # ---------------------------------------------------------------------------
 # 4. Install init.d script

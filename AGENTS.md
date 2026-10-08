@@ -30,3 +30,12 @@ This file tracks significant changes made by AI agents (Ona / Claude) to this re
 - `https+insecure://` used in serve routes because Victron uses self-signed certificates locally.
 - Tailscale state stored in `state/` subdirectory (not `/etc/tailscale`) so it persists across firmware updates.
 - Download uses `wget` (available on Victron firmware); `git` is used if present, tarball fallback otherwise.
+
+## 2026-10-08 – Firmware recovery and boot diagnostics (Codex)
+
+- Confirmed the Ekrano boot hook is executable and wired through `S99custom-rc-late.sh`; the Node-RED log demonstrates a read-only rootfs failure.
+- Register/repair the persistent hook before installation, preserving unrelated entries and avoiding boot-time hook rewrites.
+- Remount rootfs read/write before system modifications; capture Tailscale boot output from the beginning with boot ID and exit status.
+- Ship runnable scripts with executable permissions and protect sourced config with mode 600.
+- Keep internet-based binary downloads and existing state storage; no persistent binary cache or automatic retry loop.
+- Added isolated regression checks for hook migration, permissions, remount failure, and early boot logging. Actual reboot verification is still required on the device.
