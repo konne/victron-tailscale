@@ -39,7 +39,9 @@ case "$1" in
 
     # Re-apply configuration (idempotent – skips steps already done).
     if [ -f "${MODULE_DIR}/setup.sh" ]; then
-      sh "${MODULE_DIR}/setup.sh" --boot >> "${MODULE_DIR}/setup.log" 2>&1 &
+      if [ "${2:-}" != "--daemon-only" ]; then
+        sh "${MODULE_DIR}/setup.sh" --boot </dev/null >/dev/null 2>&1 9>&- &
+      fi
     fi
     ;;
 

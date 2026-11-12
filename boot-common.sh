@@ -40,3 +40,38 @@ prepare_rootfs() {
         return 1
     fi
 }
+
+# The lock is on /run, so a reboot cannot leave a stale lock. The parent holds
+# fd 9 across retries; workers/daemons must close it so they cannot retain it.
+acquire_setup_lock() {
+    command -v flock >/dev/null 2>&1 || {
+        echo "ERROR: flock is required to serialize setup." >&2
+        exit 1
+    }
+    exec 9>"${SETUP_LOCK_FILE:-/run/${MARKER}-setup.lock}"
+    if ! flock -n 9; then
+        echo "Another ${MARKER} setup is already running; skipping duplicate."
+        exit 0
+    fi
+}
+
+run_boot_setup() {
+    BOOT_ATTEMPT=1
+    BOOT_DELAY=10
+    while :; do
+        echo "Boot recovery attempt ${BOOT_ATTEMPT}"
+        # A separate shell preserves set -e inside the worker even though its
+        # exit status is tested here. No retry may hide an intermediate failure.
+        if sh "$SETUP_SCRIPT" --boot-once "$@" 9>&-; then
+            echo "Boot recovery completed after ${BOOT_ATTEMPT} attempt(s)."
+            return 0
+        else
+            BOOT_RESULT=$?
+        fi
+        echo "Boot setup failed (exit ${BOOT_RESULT}); retrying in ${BOOT_DELAY}s."
+        sleep "$BOOT_DELAY"
+        BOOT_ATTEMPT=$((BOOT_ATTEMPT + 1))
+        BOOT_DELAY=$((BOOT_DELAY * 2))
+        [ "$BOOT_DELAY" -le 300 ] || BOOT_DELAY=300
+    done
+}

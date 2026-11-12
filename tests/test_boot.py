@@ -71,7 +71,7 @@ class BootTests(unittest.TestCase):
             shutil.copy2(ROOT / 'config-template.sh', install / 'config.sh')
         helper = install / 'boot-common.sh'
         helper.write_text(helper.read_text() + '\nprepare_rootfs() { echo "simulated remount failure"; return 1; }\nregister_boot_hook() { echo "unexpected hook edit on boot"; return 1; }\n')
-        result = subprocess.run(['sh', str(install / 'setup.sh'), '--boot'], capture_output=True, text=True)
+        result = subprocess.run(['sh', str(install / 'setup.sh'), '--boot-once'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         log = (install / 'setup.log').read_text()
         self.assertIn('boot=true', log)

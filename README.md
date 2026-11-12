@@ -8,7 +8,8 @@ Victron firmware updates wipe `/usr/bin` and `/etc/init.d` but leave `/data` int
 
 1. Manual `setup.sh` registers itself in executable `/data/rc.local` before downloads, preserving other hooks and placing its entry before any exit.
 2. On every boot, `rc.local` starts `setup.sh --boot` in the background. Setup logs from its first step, remounts the root filesystem read/write when needed, restores missing binaries and init script, and applies the configured routes. The root filesystem remains writable until reboot. Failure to remount stops setup before system changes.
-3. Tailscale state is stored under `/data/victron-tailscale/state/` and is never wiped.
+3. Failed boot attempts retry after 10, 20, 40, 80, and 160 seconds, then every 300 seconds until successful. Downloads use a 30-second inactivity timeout and a single transfer attempt; `tailscale up` has a 30-second connection timeout on boot (manual login can wait for browser authentication). The next boot attempt retries failures. A per-module `flock` lock in `/run` prevents the init script and `rc.local` from racing.
+4. Tailscale state is stored under `/data/victron-tailscale/state/` and is never wiped.
 
 ### Why separate service nodes?
 
@@ -223,7 +224,7 @@ sh /data/victron-tailscale/setup.sh
 ```
 
 **tailscale not found after firmware update:**
-Check `setup.log` first. The `/data/rc.local` hook restores missing binaries; the init script alone cannot do that. Boot logging starts before config loading or downloading and includes boot ID and exit status. If a download failed, connect to the internet and re-run setup or reboot. If there is no boot entry, check executable permission on `/data/rc.local` and Settings → General → Modification checks → Modifications enabled. A firmware update already includes a reboot.
+Check `setup.log` first. The `/data/rc.local` hook restores missing binaries; the init script alone cannot do that. Boot logging starts before config loading or downloading and includes boot ID and exit status. If a download failed, restore internet connectivity; boot recovery retries automatically. Look for `Boot recovery completed` in the log. Manual setup remains a single attempt. If there is no boot entry, check executable permission on `/data/rc.local` and Settings → General → Modification checks → Modifications enabled. A firmware update already includes a reboot.
 
 **`service hosts must be tagged nodes` error:**
 Tailscale requires the device to be a tagged node (not a user node) to host `svc:` services. Fix:
@@ -242,7 +243,7 @@ Tailscale requires the device to be a tagged node (not a user node) to host `svc
 
 ## Recovery and verification
 
-Binaries continue to be downloaded into `/usr/bin`; downloaded archives are removed. No persistent binary cache or retry loop is used. `install.sh`, `setup.sh`, `uninstall.sh`, and `init.d/tailscaled` are executable in both the repository and installer.
+Binaries continue to be downloaded into `/usr/bin`; downloaded archives are removed. No persistent binary cache is used. Boot setup retries failed attempts with a delay capped at five minutes; manual setup runs once. The init script starts only the daemon when called by setup, avoiding recursive setup launches. Internal `--boot-once` workers run under the boot runner’s lock. `install.sh`, `setup.sh`, `uninstall.sh`, and `init.d/tailscaled` are executable in both the repository and installer.
 
 Boot runs capture all output in `setup.log`, including errors before the init script exists. Manual runs display output in the terminal and record status messages in the log. They never issue a device reboot.
 
@@ -268,3 +269,7 @@ tailscale serve status --json
 ```
 
 Then open **Services → camper-ui** in the admin console and approve the Ekrano host if approval is pending. No device reboot is required.
+
+## Verified recovery
+
+The 2026-11-12 Ekrano/Venus OS v3.85 test covered a reboot with both binaries missing and a subsequent normal reboot. See the [live verification record](docs/boot-verification-2026-11-12.md) for observed retries, service checks, and limitations.

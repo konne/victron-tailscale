@@ -13,7 +13,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG="${SCRIPT_DIR}/config.sh"
 TEMPLATE="${SCRIPT_DIR}/config-template.sh"
 BOOT_MODE=false
-[ "${1:-}" = "--boot" ] && BOOT_MODE=true
+BOOT_ONCE=false
+case "${1:-}" in
+  --boot) BOOT_MODE=true ;;
+  --boot-once) BOOT_MODE=true; BOOT_ONCE=true ;;
+  "") ;;
+  *) echo "Usage: $0 [--boot]" >&2; exit 2 ;;
+esac
 LOG_FILE="${SCRIPT_DIR}/setup.log"
 # Capture even config-load and download errors on boot, before init.d exists.
 if $BOOT_MODE; then
@@ -35,6 +41,13 @@ fi
 RC_LOCAL="/data/rc.local"
 SETUP_SCRIPT="${SCRIPT_DIR}/setup.sh"
 MARKER="victron-tailscale"
+if ! $BOOT_ONCE; then
+  acquire_setup_lock
+  if $BOOT_MODE; then
+    run_boot_setup
+    exit 0
+  fi
+fi
 if ! $BOOT_MODE; then
   register_boot_hook
 fi
@@ -73,7 +86,7 @@ fetch_latest_version() {
   # Scrape the latest stable version for static binaries from the package index.
   # The page lists files like tailscale_1.94.2_arm.tgz in the #static section.
   # We grab the first version number that appears next to an arm tarball link.
-  wget -qO- "https://pkgs.tailscale.com/stable/" \
+  wget -T 30 -t 1 -O- "https://pkgs.tailscale.com/stable/" \
     | grep -o 'tailscale_[0-9][0-9.]*_arm\.tgz' \
     | head -n 1 \
     | sed 's/tailscale_\([0-9][0-9.]*\)_arm\.tgz/\1/'
@@ -99,8 +112,8 @@ install_tailscale() {
   EXTRACT_DIR="${TMP_DIR}/tailscale_extract"
 
   log "Downloading ${DOWNLOAD_URL} ..."
-  wget -q -O "$ARCHIVE_PATH" "$DOWNLOAD_URL" || {
-    log "ERROR: download failed. Check TAILSCALE_VERSION and internet connectivity; rerun setup or reboot once online."
+  wget -nv -T 30 -t 1 -O "$ARCHIVE_PATH" "$DOWNLOAD_URL" || {
+    log "ERROR: download failed. Check TAILSCALE_VERSION and internet connectivity. Boot recovery will retry automatically."
     exit 1
   }
 
@@ -119,7 +132,7 @@ install_tailscale() {
 }
 
 NEED_INSTALL=false
-if ! command -v tailscale >/dev/null 2>&1; then
+if ! command -v tailscale >/dev/null 2>&1 || ! command -v tailscaled >/dev/null 2>&1; then
   NEED_INSTALL=true
 elif [ -n "$TAILSCALE_VERSION" ]; then
   # Only enforce a version check when a specific version is pinned in config.
@@ -155,7 +168,7 @@ fi
 # ---------------------------------------------------------------------------
 if ! pgrep tailscaled >/dev/null 2>&1; then
   log "Starting tailscaled..."
-  /etc/init.d/tailscaled start
+  /etc/init.d/tailscaled start --daemon-only 9>&-
   sleep 3
 fi
 
@@ -171,6 +184,9 @@ else
   log "Tailscale not running (state: ${TS_STATUS}) – authenticating..."
 
   UP_ARGS="--hostname=${DEVICE_NAME}-victron"
+  if $BOOT_MODE; then
+    UP_ARGS="${UP_ARGS} --timeout=30s"
+  fi
 
   if [ -n "$TAILSCALE_LOGIN_SERVER" ]; then
     UP_ARGS="${UP_ARGS} --login-server=${TAILSCALE_LOGIN_SERVER}"
@@ -185,42 +201,11 @@ else
     # shellcheck disable=SC2086
     tailscale up $UP_ARGS
   else
-    # Interactive login – capture the auth URL and print it cleanly.
-    # --qr is omitted (QR output is garbled on serial/SSH terminals).
-    # tailscale up blocks until authenticated, so run it in the background
-    # and extract the URL from its output.
+    # Preserve the real exit status (a pipe into a log formatter hid failures).
+    # A boot without connectivity must return to the retry loop, not wait forever.
+    # The CLI prints its login URL if authentication actually needs user action.
     # shellcheck disable=SC2086
-    tailscale up $UP_ARGS 2>&1 | while IFS= read -r line; do
-      # Strip leading whitespace to reliably match the URL line.
-      # tailscale prints "To authenticate, visit:" then the URL indented.
-      trimmed="$(echo "$line" | sed 's/^[[:space:]]*//')"
-      case "$trimmed" in
-        https://*)
-          echo ""
-          echo "============================================================"
-          echo "  ACTION REQUIRED – authenticate this device with Tailscale"
-          echo ""
-          echo "  Open this URL in your browser:"
-          echo ""
-          echo "    $trimmed"
-          echo ""
-          echo "  After logging in, remember to:"
-          echo ""
-          echo "    1. Disable key expiry for the main node (Machines page):"
-          echo "         ${DEVICE_NAME}"
-          echo ""
-          echo "    2. Approve each service node (Services page):"
-          echo "$SERVICES" | grep -v '^$' | while IFS='|' read -r svc _rest; do
-            svc="$(echo "$svc" | tr -d ' \t')"
-            if [ -n "$svc" ]; then
-              echo "         ${DEVICE_NAME}-${svc}"
-            fi
-          done
-          echo "============================================================"
-          echo ""
-          ;;
-      esac
-    done
+    tailscale up $UP_ARGS
   fi
 fi
 

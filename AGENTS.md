@@ -46,3 +46,11 @@ This file tracks significant changes made by AI agents (Ona / Claude) to this re
 - Apply every named service with its complete proxy target, preserve CLI approval notices, and fail setup when a Serve command fails.
 - Clarify that local route configuration does not establish admin approval or backend health; include the base service in the printed URLs.
 - Added mocked regressions for shared backends, re-advertising existing routes, approval output, and command failure.
+
+## 2026-11-12 – Retry recovery after delayed network startup (Codex)
+
+- On Venus OS v3.85, both persistent hooks ran before Ethernet obtained an IP address. Git package downloads and Tailscale version detection failed once and never retried; Node-RED consequently loaded its fallback flow without Projects.
+- Added boot retries with exponential delay (10 seconds up to 300 seconds) and a per-module `/run` flock to avoid overlapping rc.local/init setup runs. Worker failures preserve their exit status and the daemon does not inherit the setup lock.
+- Bound Tailscale boot login to 30 seconds, retain interactive manual login, preserve authentication failures, detect a missing daemon binary, and avoid recursive setup from the init script.
+- Added mocked retry, lock, backend failure, and service reconciliation tests. Both repositories currently pass 33 tests in total.
+- First live reboot (boot ID `39acd76b-cddc-4eb3-af45-b2f13f7b8882`) restored missing Git 2.44.4 and Tailscale 1.104.6 on attempt five, after four DNS/network failures. Tailscale completed at 2026-11-12 17:12 NZDT; Node-RED loaded the unchanged camper project and started its flows. The final scripts also passed a second reboot (boot ID `e1d4aa59-bd30-439d-85ef-ed6172616804`): Git setup completed on attempt one, Tailscale on attempt three after two connection timeouts, and duplicate setup was skipped. Local and Tailscale HTTPS endpoints responded, InfluxDB health returned HTTP 200, and the project files remained unchanged. See `docs/boot-verification-2026-11-12.md`. Both the user-requested original key removal and temporary repair-key cleanup are complete.
